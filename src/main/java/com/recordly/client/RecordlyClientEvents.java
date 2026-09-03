@@ -18,8 +18,10 @@ import net.minecraft.network.chat.Component;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
+import net.neoforged.neoforge.client.event.ViewportEvent;
 import org.lwjgl.glfw.GLFW;
 
 public class RecordlyClientEvents {
@@ -54,6 +56,54 @@ public class RecordlyClientEvents {
     public static void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         RecordingManager.getInstance().stopRecording();
         ReplayManager.getInstance().stopReplay();
+    }
+
+    @SubscribeEvent
+    public static void onKeyInput(InputEvent.Key event) {
+        if (event.getAction() != GLFW.GLFW_PRESS) {
+            return;
+        }
+
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen != null) {
+            return;
+        }
+
+        ReplayManager replayManager = ReplayManager.getInstance();
+        if (!replayManager.isInReplay()) {
+            return;
+        }
+
+        IReplayPlaybackController controller = replayManager.getPlaybackController();
+        FreecamController freecam = replayManager.getFreecamController();
+
+        if (event.getKey() == GLFW.GLFW_KEY_P || event.getKey() == GLFW.GLFW_KEY_SPACE) {
+            if (controller != null) {
+                controller.togglePlayPause();
+            }
+        } else if (event.getKey() == GLFW.GLFW_KEY_F6 || event.getKey() == GLFW.GLFW_KEY_V) {
+            freecam.setActive(!freecam.isActive());
+        } else if (event.getKey() == GLFW.GLFW_KEY_RIGHT_BRACKET) {
+            if (controller != null) {
+                controller.setSpeed(controller.getSpeed() + 0.25);
+            }
+        } else if (event.getKey() == GLFW.GLFW_KEY_LEFT_BRACKET) {
+            if (controller != null) {
+                controller.setSpeed(controller.getSpeed() - 0.25);
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public static void onComputeCameraAngles(ViewportEvent.ComputeCameraAngles event) {
+        ReplayManager replayManager = ReplayManager.getInstance();
+        if (replayManager.isInReplay()) {
+            FreecamController freecam = replayManager.getFreecamController();
+            if (freecam.isActive()) {
+                event.setYaw(freecam.getYaw());
+                event.setPitch(freecam.getPitch());
+            }
+        }
     }
 
     @SubscribeEvent
