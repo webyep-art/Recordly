@@ -1,21 +1,14 @@
-# NeoForge 1.21.1 Template Mod
+# Recordly
 
-A clean, minimal template for creating Minecraft mods with NeoForge 1.21.1.
+A modern replay mod for Minecraft 1.21.1 NeoForge.
 
 ## Features
-- **NeoForge 1.21.1** support.
-- **ModDevGradle** plugin setup.
-- **MIT License**.
-- Basic registration examples for:
-  - Blocks
-  - Items
-  - Creative Mode Tabs
+- Packet-level session recording into `.mcpr` format
+- Built-in Replay Viewer screen
+- Freecam controls (WASD, Space, Shift, mouse)
+- Playback controls (Play / Pause, Speed adjustment)
 
-## Getting Started
-1. Clone the repository.
-2. Open in IntelliJ IDEA.
-3. Wait for Gradle to sync.
-4. Run the game via `runClient` task.
-
-## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Requirements
+- Minecraft 1.21.1
+- NeoForge 21.1.27+
+- Java 21
