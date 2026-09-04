@@ -29,6 +29,7 @@ import net.minecraft.network.protocol.game.GameProtocols;
 import net.minecraft.resources.RegistryDataLoader;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.RegistryLayer;
+import net.minecraft.server.ServerLinks;
 import net.minecraft.server.WorldLoader;
 import net.minecraft.server.packs.repository.PackRepository;
 import net.minecraft.server.packs.resources.CloseableResourceManager;
@@ -156,7 +157,8 @@ public class ReplayManager {
                     null,
                     false,
                     Collections.emptyMap(),
-                    null
+                    ServerLinks.EMPTY,
+                    ConnectionType.NEOFORGE
             );
 
             this.packetListener = new ClientPacketListener(mc, connection, cookie);
