@@ -1,26 +1,43 @@
 package com.recordly.replay;
 
+import com.mojang.authlib.GameProfile;
 import com.recordly.replay.camera.FreecamController;
 import com.recordly.replay.network.DropOutboundHandler;
 import com.recordly.storage.RecordlyFile;
 import com.recordly.storage.RecordlyMetadata;
-import com.recordly.ui.screen.ReplayLoadingScreen;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.gui.screens.TitleScreen;
-import net.minecraft.client.multiplayer.ClientHandshakePacketListenerImpl;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.CommonListenerCookie;
+import net.minecraft.client.telemetry.WorldSessionTelemetryManager;
+import net.minecraft.core.Holder;
+import net.minecraft.core.RegistryAccess;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.Connection;
+import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.PacketFlow;
-import net.minecraft.network.protocol.login.LoginProtocols;
+import net.minecraft.network.protocol.game.ClientboundLoginPacket;
+import net.minecraft.network.protocol.game.CommonPlayerSpawnInfo;
+import net.minecraft.network.protocol.game.GameProtocols;
+import net.minecraft.resources.RegistryDataLoader;
+import net.minecraft.world.flag.FeatureFlags;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
+import net.minecraft.world.level.dimension.DimensionType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Collections;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 
 public class ReplayManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(ReplayManager.class);
@@ -34,6 +51,7 @@ public class ReplayManager {
     private PacketPayload nextPacket;
     private EmbeddedChannel channel;
     private Connection connection;
+    private ClientPacketListener packetListener;
     private boolean inReplay = false;
 
     private ReplayManager() {
@@ -77,75 +95,82 @@ public class ReplayManager {
             this.channel.pipeline().addLast("packet_handler", connection);
             this.channel.pipeline().fireChannelActive();
 
-            ClientHandshakePacketListenerImpl listener = new ClientHandshakePacketListenerImpl(
-                    connection,
-                    mc,
+            RegistryAccess.Frozen registries = RegistryDataLoader.load(
+                    mc.getResourceManager(),
+                    RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY),
+                    RegistryDataLoader.WORLDGEN_REGISTRIES
+            );
+            GameProfile profile = new GameProfile(UUID.randomUUID(), "ReplayViewer");
+            WorldSessionTelemetryManager telemetry = mc.getTelemetryManager().createWorldSessionManager(false, null, "replay");
+
+            CommonListenerCookie cookie = new CommonListenerCookie(
+                    profile,
+                    telemetry,
+                    registries,
+                    FeatureFlags.DEFAULT_FLAGS,
+                    "Recordly",
                     null,
                     parentScreen,
-                    false,
+                    Collections.emptyMap(),
                     null,
-                    status -> {},
+                    false,
+                    Collections.emptyMap(),
                     null
             );
-            connection.setupInboundProtocol(LoginProtocols.CLIENTBOUND, listener);
+
+            this.packetListener = new ClientPacketListener(mc, connection, cookie);
+
+            Holder<DimensionType> dimensionType = registries.registryOrThrow(Registries.DIMENSION_TYPE)
+                    .getHolderOrThrow(BuiltinDimensionTypes.OVERWORLD);
+            CommonPlayerSpawnInfo spawnInfo = new CommonPlayerSpawnInfo(
+                    dimensionType,
+                    Level.OVERWORLD,
+                    0L,
+                    GameType.SPECTATOR,
+                    null,
+                    false,
+                    false,
+                    null,
+                    0
+            );
+
+            ClientboundLoginPacket loginPacket = new ClientboundLoginPacket(
+                    1,
+                    false,
+                    Set.of(Level.OVERWORLD),
+                    1,
+                    8,
+                    8,
+                    false,
+                    true,
+                    false,
+                    spawnInfo,
+                    false
+            );
+
+            this.packetListener.handleLogin(loginPacket);
+            this.connection.setupInboundProtocol(GameProtocols.CLIENTBOUND_TEMPLATE.bind(RegistryFriendlyByteBuf.decorator(registries)), packetListener);
 
             this.inReplay = true;
-            mc.setScreen(new ReplayLoadingScreen(parentScreen, file.getName()));
+            mc.setScreen(null);
 
-            LOGGER.info("Recordly: Started replay loading for '{}'", file.getName());
+            if (mc.player != null) {
+                freecamController.setActive(true);
+                freecamController.setPosition(mc.player.position());
+                freecamController.setRotation(mc.player.getYRot(), mc.player.getXRot());
+            }
+
+            LOGGER.info("Recordly: Replay world created for '{}'", file.getName());
             return true;
-        } catch (IOException e) {
+        } catch (Exception e) {
             LOGGER.error("Recordly: Failed to open replay", e);
             stopReplay();
             return false;
         }
     }
 
-    public synchronized void pumpInitialPackets() {
-        if (!inReplay || channel == null || packetReader == null) {
-            return;
-        }
-
-        Minecraft mc = Minecraft.getInstance();
-        int pumped = 0;
-        while (inReplay && (mc.level == null || pumped < 200)) {
-            if (nextPacket == null) {
-                if (packetReader.hasNext()) {
-                    try {
-                        nextPacket = packetReader.readNextPacket().orElse(null);
-                    } catch (IOException e) {
-                        break;
-                    }
-                }
-                if (nextPacket == null) {
-                    break;
-                }
-            }
-
-            channel.pipeline().fireChannelRead(Unpooled.wrappedBuffer(nextPacket.data()));
-            pumped++;
-
-            try {
-                nextPacket = packetReader.readNextPacket().orElse(null);
-            } catch (IOException e) {
-                nextPacket = null;
-                break;
-            }
-
-            if (mc.level != null && mc.player != null) {
-                break;
-            }
-        }
-
-        if (mc.level != null && mc.player != null) {
-            freecamController.setActive(true);
-            freecamController.setPosition(mc.player.position());
-            freecamController.setRotation(mc.player.getYRot(), mc.player.getXRot());
-        }
-    }
-
     public synchronized void tickPlayback() {
-        if (!inReplay || channel == null || playbackController == null) {
+        if (!inReplay || channel == null || connection == null || playbackController == null) {
             return;
         }
 
@@ -168,6 +193,12 @@ public class ReplayManager {
                 nextPacket = null;
                 break;
             }
+        }
+
+        try {
+            connection.tick();
+            channel.runPendingTasks();
+        } catch (Exception ignored) {
         }
     }
 
@@ -203,6 +234,7 @@ public class ReplayManager {
         }
 
         playbackController = null;
+        packetListener = null;
         currentReplayFile = null;
         currentMetadata = null;
         nextPacket = null;
