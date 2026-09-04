@@ -62,10 +62,10 @@ public class ReplayListScreen extends Screen {
     }
 
     private void reloadReplays() {
-        selectionList.clearEntries();
+        selectionList.clearList();
         List<RecordlyFile> files = storage.listRecordings();
         for (RecordlyFile file : files) {
-            selectionList.addEntry(new ReplayEntry(file));
+            selectionList.addReplay(new ReplayEntry(file));
         }
         updateButtonStates();
     }
@@ -85,10 +85,7 @@ public class ReplayListScreen extends Screen {
         if (selected == null) {
             return;
         }
-        boolean started = ReplayManager.getInstance().startReplay(selected.file);
-        if (started) {
-            this.minecraft.setScreen(null);
-        }
+        ReplayManager.getInstance().startReplay(selected.file, this);
     }
 
     private void deleteSelected() {
@@ -118,6 +115,14 @@ public class ReplayListScreen extends Screen {
     public class ReplaySelectionList extends ObjectSelectionList<ReplayEntry> {
         public ReplaySelectionList(Minecraft minecraft, int width, int height, int y0, int itemHeight) {
             super(minecraft, width, height, y0, itemHeight);
+        }
+
+        public void clearList() {
+            this.clearEntries();
+        }
+
+        public void addReplay(ReplayEntry entry) {
+            this.addEntry(entry);
         }
 
         @Override

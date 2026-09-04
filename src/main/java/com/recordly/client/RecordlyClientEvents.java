@@ -112,10 +112,7 @@ public class RecordlyClientEvents {
         ReplayManager replayManager = ReplayManager.getInstance();
 
         if (replayManager.isInReplay()) {
-            IReplayPlaybackController controller = replayManager.getPlaybackController();
-            if (controller != null) {
-                controller.update(50);
-            }
+            replayManager.tickPlayback();
 
             FreecamController freecam = replayManager.getFreecamController();
             if (freecam.isActive() && mc.screen == null) {
@@ -136,7 +133,7 @@ public class RecordlyClientEvents {
 
     @SubscribeEvent
     public static void onRenderGui(RenderGuiEvent.Post event) {
-        ReplayControlOverlay.render(event.getGuiGraphics(), event.getPartialTick());
+        ReplayControlOverlay.render(event.getGuiGraphics());
     }
 
     @SubscribeEvent

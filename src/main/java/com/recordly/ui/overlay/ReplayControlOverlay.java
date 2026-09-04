@@ -8,7 +8,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
 public class ReplayControlOverlay {
-    public static void render(GuiGraphics graphics, float partialTick) {
+    public static void render(GuiGraphics graphics) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.options.hideGui) {
             return;
