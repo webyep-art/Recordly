@@ -19,6 +19,7 @@ import net.minecraft.core.LayeredRegistryAccess;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.Connection;
+import net.minecraft.network.ConnectionProtocol;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.PacketFlow;
@@ -26,6 +27,7 @@ import net.minecraft.network.protocol.game.ClientboundLoginPacket;
 import net.minecraft.network.protocol.game.CommonPlayerSpawnInfo;
 import net.minecraft.network.protocol.game.GameProtocols;
 import net.minecraft.resources.RegistryDataLoader;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.RegistryLayer;
 import net.minecraft.server.WorldLoader;
 import net.minecraft.server.packs.repository.PackRepository;
@@ -38,6 +40,10 @@ import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.neoforged.neoforge.common.ModConfigSpec;
 import net.neoforged.neoforge.common.NeoForgeConfig;
+import net.neoforged.neoforge.network.connection.ConnectionType;
+import net.neoforged.neoforge.network.registration.ChannelAttributes;
+import net.neoforged.neoforge.network.registration.NetworkChannel;
+import net.neoforged.neoforge.network.registration.NetworkPayloadSetup;
 import net.neoforged.neoforge.registries.DataPackRegistriesHooks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +52,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -106,6 +114,27 @@ public class ReplayManager {
             this.connection = new ReplayConnection();
             this.channel.pipeline().addLast("packet_handler", connection);
             this.channel.pipeline().fireChannelActive();
+
+            Map<ResourceLocation, NetworkChannel> anyChannelMap = new HashMap<>() {
+                @Override
+                public NetworkChannel get(Object key) {
+                    if (key instanceof ResourceLocation loc) {
+                        return new NetworkChannel(loc, "1");
+                    }
+                    return null;
+                }
+
+                @Override
+                public boolean containsKey(Object key) {
+                    return true;
+                }
+            };
+            NetworkPayloadSetup payloadSetup = new NetworkPayloadSetup(Map.of(
+                    ConnectionProtocol.PLAY, anyChannelMap,
+                    ConnectionProtocol.CONFIGURATION, anyChannelMap
+            ));
+            ChannelAttributes.setPayloadSetup(connection, payloadSetup);
+            ChannelAttributes.setConnectionType(connection, ConnectionType.NEOFORGE);
 
             if (this.cachedRegistries == null) {
                 this.cachedRegistries = loadRegistries(mc);
@@ -224,6 +253,9 @@ public class ReplayManager {
 
         if (connection != null) {
             try {
+                if (connection instanceof ReplayConnection replayConnection) {
+                    replayConnection.setAllowDisconnect(true);
+                }
                 connection.disconnect(Component.literal("Replay stopped"));
             } catch (Exception ignored) {
             }
