@@ -29,6 +29,10 @@ public class RecordlyClientEvents {
 
     @SubscribeEvent
     public static void onLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        if (ReplayManager.getInstance().isInReplay()) {
+            return;
+        }
+
         Connection connection = event.getConnection();
         if (connection != null) {
             Channel channel = connection.channel();

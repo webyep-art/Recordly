@@ -4,6 +4,7 @@ import com.mojang.authlib.GameProfile;
 import com.mojang.datafixers.util.Pair;
 import com.recordly.replay.camera.FreecamController;
 import com.recordly.replay.network.DropOutboundHandler;
+import com.recordly.replay.network.ReplayConnection;
 import com.recordly.storage.RecordlyFile;
 import com.recordly.storage.RecordlyMetadata;
 import io.netty.buffer.Unpooled;
@@ -35,12 +36,15 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.WorldDataConfiguration;
 import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
+import net.neoforged.neoforge.common.ModConfigSpec;
+import net.neoforged.neoforge.common.NeoForgeConfig;
 import net.neoforged.neoforge.registries.DataPackRegistriesHooks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
@@ -99,7 +103,7 @@ public class ReplayManager {
             this.channel.pipeline().addFirst("drop_outbound", new DropOutboundHandler());
             Connection.configureInMemoryPipeline(this.channel.pipeline(), PacketFlow.CLIENTBOUND);
 
-            this.connection = new Connection(PacketFlow.CLIENTBOUND);
+            this.connection = new ReplayConnection();
             this.channel.pipeline().addLast("packet_handler", connection);
             this.channel.pipeline().fireChannelActive();
 
@@ -107,6 +111,7 @@ public class ReplayManager {
                 this.cachedRegistries = loadRegistries(mc);
             }
             RegistryAccess.Frozen registries = this.cachedRegistries;
+            ensureServerConfigCached();
             GameProfile profile = new GameProfile(UUID.randomUUID(), "ReplayViewer");
             WorldSessionTelemetryManager telemetry = mc.getTelemetryManager().createWorldSessionManager(false, null, "replay");
 
@@ -155,10 +160,11 @@ public class ReplayManager {
                     false
             );
 
-            this.packetListener.handleLogin(loginPacket);
             this.connection.setupInboundProtocol(GameProtocols.CLIENTBOUND_TEMPLATE.bind(RegistryFriendlyByteBuf.decorator(registries)), packetListener);
+            this.connection.setupOutboundProtocol(GameProtocols.SERVERBOUND_TEMPLATE.bind(RegistryFriendlyByteBuf.decorator(registries)));
 
             this.inReplay = true;
+            this.packetListener.handleLogin(loginPacket);
             mc.setScreen(null);
 
             if (mc.player != null) {
@@ -301,6 +307,19 @@ public class ReplayManager {
             layeredAccess = layeredAccess.replaceFrom(RegistryLayer.DIMENSIONS, dimensionAccess);
 
             return layeredAccess.compositeAccess();
+        }
+    }
+
+    private void ensureServerConfigCached() {
+        try {
+            Field cachedField = ModConfigSpec.ConfigValue.class.getDeclaredField("cachedValue");
+            cachedField.setAccessible(true);
+            cachedField.set(NeoForgeConfig.SERVER.removeErroringEntities, Boolean.FALSE);
+            cachedField.set(NeoForgeConfig.SERVER.removeErroringBlockEntities, Boolean.FALSE);
+            cachedField.set(NeoForgeConfig.SERVER.fullBoundingBoxLadders, Boolean.FALSE);
+            cachedField.set(NeoForgeConfig.SERVER.permissionHandler, "default");
+            cachedField.set(NeoForgeConfig.SERVER.advertiseDedicatedServerToLan, Boolean.FALSE);
+        } catch (Exception ignored) {
         }
     }
 }
