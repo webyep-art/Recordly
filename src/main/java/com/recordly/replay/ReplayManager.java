@@ -1,6 +1,7 @@
 package com.recordly.replay;
 
 import com.mojang.authlib.GameProfile;
+import com.mojang.datafixers.util.Pair;
 import com.recordly.replay.camera.FreecamController;
 import com.recordly.replay.network.DropOutboundHandler;
 import com.recordly.storage.RecordlyFile;
@@ -13,8 +14,8 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.multiplayer.CommonListenerCookie;
 import net.minecraft.client.telemetry.WorldSessionTelemetryManager;
 import net.minecraft.core.Holder;
+import net.minecraft.core.LayeredRegistryAccess;
 import net.minecraft.core.RegistryAccess;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.Connection;
 import net.minecraft.network.RegistryFriendlyByteBuf;
@@ -24,11 +25,17 @@ import net.minecraft.network.protocol.game.ClientboundLoginPacket;
 import net.minecraft.network.protocol.game.CommonPlayerSpawnInfo;
 import net.minecraft.network.protocol.game.GameProtocols;
 import net.minecraft.resources.RegistryDataLoader;
+import net.minecraft.server.RegistryLayer;
+import net.minecraft.server.WorldLoader;
+import net.minecraft.server.packs.repository.PackRepository;
+import net.minecraft.server.packs.resources.CloseableResourceManager;
 import net.minecraft.world.flag.FeatureFlags;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.WorldDataConfiguration;
 import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
+import net.neoforged.neoforge.registries.DataPackRegistriesHooks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,6 +51,7 @@ public class ReplayManager {
     private static final ReplayManager INSTANCE = new ReplayManager();
 
     private final FreecamController freecamController = new FreecamController();
+    private RegistryAccess.Frozen cachedRegistries;
     private RecordlyFile currentReplayFile;
     private RecordlyMetadata currentMetadata;
     private IReplayPlaybackController playbackController;
@@ -95,11 +103,10 @@ public class ReplayManager {
             this.channel.pipeline().addLast("packet_handler", connection);
             this.channel.pipeline().fireChannelActive();
 
-            RegistryAccess.Frozen registries = RegistryDataLoader.load(
-                    mc.getResourceManager(),
-                    RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY),
-                    RegistryDataLoader.WORLDGEN_REGISTRIES
-            );
+            if (this.cachedRegistries == null) {
+                this.cachedRegistries = loadRegistries(mc);
+            }
+            RegistryAccess.Frozen registries = this.cachedRegistries;
             GameProfile profile = new GameProfile(UUID.randomUUID(), "ReplayViewer");
             WorldSessionTelemetryManager telemetry = mc.getTelemetryManager().createWorldSessionManager(false, null, "replay");
 
@@ -265,5 +272,35 @@ public class ReplayManager {
 
     public RecordlyFile getCurrentReplayFile() {
         return currentReplayFile;
+    }
+
+    private RegistryAccess.Frozen loadRegistries(Minecraft mc) throws Exception {
+        PackRepository packRepository = mc.getResourcePackRepository();
+        packRepository.reload();
+        WorldLoader.PackConfig packConfig = new WorldLoader.PackConfig(
+                packRepository,
+                WorldDataConfiguration.DEFAULT,
+                false,
+                false
+        );
+        Pair<WorldDataConfiguration, CloseableResourceManager> pair = packConfig.createResourceManager();
+        try (CloseableResourceManager resourceManager = pair.getSecond()) {
+            LayeredRegistryAccess<RegistryLayer> layeredAccess = RegistryLayer.createRegistryAccess();
+            RegistryAccess.Frozen worldgenAccess = RegistryDataLoader.load(
+                    resourceManager,
+                    layeredAccess.getAccessForLoading(RegistryLayer.WORLDGEN),
+                    DataPackRegistriesHooks.getDataPackRegistries()
+            );
+            layeredAccess = layeredAccess.replaceFrom(RegistryLayer.WORLDGEN, worldgenAccess);
+
+            RegistryAccess.Frozen dimensionAccess = RegistryDataLoader.load(
+                    resourceManager,
+                    layeredAccess.getAccessForLoading(RegistryLayer.DIMENSIONS),
+                    RegistryDataLoader.DIMENSION_REGISTRIES
+            );
+            layeredAccess = layeredAccess.replaceFrom(RegistryLayer.DIMENSIONS, dimensionAccess);
+
+            return layeredAccess.compositeAccess();
+        }
     }
 }
