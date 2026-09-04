@@ -21,7 +21,6 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
-import net.neoforged.neoforge.client.event.ViewportEvent;
 import org.lwjgl.glfw.GLFW;
 
 public class RecordlyClientEvents {
@@ -81,7 +80,7 @@ public class RecordlyClientEvents {
         IReplayPlaybackController controller = replayManager.getPlaybackController();
         FreecamController freecam = replayManager.getFreecamController();
 
-        if (event.getKey() == GLFW.GLFW_KEY_P || event.getKey() == GLFW.GLFW_KEY_SPACE) {
+        if (event.getKey() == GLFW.GLFW_KEY_P) {
             if (controller != null) {
                 controller.togglePlayPause();
             }
@@ -99,18 +98,6 @@ public class RecordlyClientEvents {
     }
 
     @SubscribeEvent
-    public static void onComputeCameraAngles(ViewportEvent.ComputeCameraAngles event) {
-        ReplayManager replayManager = ReplayManager.getInstance();
-        if (replayManager.isInReplay()) {
-            FreecamController freecam = replayManager.getFreecamController();
-            if (freecam.isActive()) {
-                event.setYaw(freecam.getYaw());
-                event.setPitch(freecam.getPitch());
-            }
-        }
-    }
-
-    @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
         ReplayManager replayManager = ReplayManager.getInstance();
@@ -118,19 +105,23 @@ public class RecordlyClientEvents {
         if (replayManager.isInReplay()) {
             replayManager.tickPlayback();
 
-            FreecamController freecam = replayManager.getFreecamController();
-            if (freecam.isActive() && mc.screen == null) {
-                long window = mc.getWindow().getWindow();
-                boolean forward = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_W) == GLFW.GLFW_PRESS;
-                boolean backward = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_S) == GLFW.GLFW_PRESS;
-                boolean left = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_A) == GLFW.GLFW_PRESS;
-                boolean right = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_D) == GLFW.GLFW_PRESS;
-                boolean up = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_SPACE) == GLFW.GLFW_PRESS;
-                boolean down = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_LEFT_SHIFT) == GLFW.GLFW_PRESS;
-                boolean sprint = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_LEFT_CONTROL) == GLFW.GLFW_PRESS;
+            if (mc.player != null) {
+                if (!mc.player.getAbilities().flying) {
+                    mc.player.getAbilities().flying = true;
+                    mc.player.getAbilities().mayfly = true;
+                    mc.player.onUpdateAbilities();
+                }
+                mc.player.noPhysics = true;
 
-                freecam.setInputs(forward, backward, left, right, up, down, sprint);
-                freecam.tick();
+                FreecamController freecam = replayManager.getFreecamController();
+                freecam.setPosition(mc.player.position());
+                freecam.setRotation(mc.player.getYRot(), mc.player.getXRot());
+
+                if (mc.level != null) {
+                    int chunkX = ((int) Math.floor(mc.player.getX())) >> 4;
+                    int chunkZ = ((int) Math.floor(mc.player.getZ())) >> 4;
+                    mc.level.getChunkSource().updateViewCenter(chunkX, chunkZ);
+                }
             }
         }
     }

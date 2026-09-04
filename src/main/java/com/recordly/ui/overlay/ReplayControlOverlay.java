@@ -48,7 +48,7 @@ public class ReplayControlOverlay {
         int totalSec = controller.getTotalDurationMillis() / 1000;
         String status = controller.isPaused() ? "PAUSED" : "PLAYING";
         String speed = String.format("%.1fx", controller.getSpeed());
-        String text = String.format("[%s] %02d:%02d / %02d:%02d  (%s)  [Space: Pause, H: Speed]",
+        String text = String.format("[%s] %02d:%02d / %02d:%02d  (%s)  [P: Play/Pause, [, ]: Speed]",
                 status, curSec / 60, curSec % 60, totalSec / 60, totalSec % 60, speed);
 
         int screenWidth = graphics.guiWidth();

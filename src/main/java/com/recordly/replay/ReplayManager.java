@@ -24,6 +24,10 @@ import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.game.ClientboundLoginPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
+import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
 import net.minecraft.network.protocol.game.CommonPlayerSpawnInfo;
 import net.minecraft.network.protocol.game.GameProtocols;
 import net.minecraft.resources.RegistryDataLoader;
@@ -33,12 +37,15 @@ import net.minecraft.server.ServerLinks;
 import net.minecraft.server.WorldLoader;
 import net.minecraft.server.packs.repository.PackRepository;
 import net.minecraft.server.packs.resources.CloseableResourceManager;
+import net.minecraft.world.entity.player.Abilities;
 import net.minecraft.world.flag.FeatureFlags;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.WorldDataConfiguration;
 import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.common.ModConfigSpec;
 import net.neoforged.neoforge.common.NeoForgeConfig;
 import net.neoforged.neoforge.network.connection.ConnectionType;
@@ -52,6 +59,7 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -80,6 +88,41 @@ public class ReplayManager {
 
     public static ReplayManager getInstance() {
         return INSTANCE;
+    }
+
+    private ChunkPos findInitialChunkPos(RecordlyFile file) {
+        try {
+            Optional<InputStream> streamOpt = file.openPacketStream();
+            if (streamOpt.isEmpty()) {
+                return new ChunkPos(0, 0);
+            }
+            try (InputStream is = streamOpt.get()) {
+                PacketStreamReader reader = new PacketStreamReader(is);
+                for (int i = 0; i < 500 && reader.hasNext(); i++) {
+                    Optional<PacketPayload> opt = reader.readNextPacket();
+                    if (opt.isEmpty()) {
+                        break;
+                    }
+                    byte[] data = opt.get().data();
+                    if (data.length >= 9) {
+                        int id = data[0] & 0x7F;
+                        int offset = 1;
+                        if ((data[0] & 0x80) != 0 && data.length >= 10) {
+                            id |= (data[1] & 0x7F) << 7;
+                            offset = 2;
+                        }
+                        if (id == 0x27 && data.length >= offset + 8) {
+                            ByteBuffer bb = ByteBuffer.wrap(data, offset, 8);
+                            int cx = bb.getInt();
+                            int cz = bb.getInt();
+                            return new ChunkPos(cx, cz);
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return new ChunkPos(0, 0);
     }
 
     public synchronized boolean startReplay(RecordlyFile file, Screen parentScreen) {
@@ -177,13 +220,15 @@ public class ReplayManager {
                     0
             );
 
+            ChunkPos initialChunk = findInitialChunkPos(file);
+
             ClientboundLoginPacket loginPacket = new ClientboundLoginPacket(
                     1,
                     false,
                     Set.of(Level.OVERWORLD),
                     1,
-                    8,
-                    8,
+                    32,
+                    32,
                     false,
                     true,
                     false,
@@ -196,13 +241,57 @@ public class ReplayManager {
 
             this.inReplay = true;
             this.packetListener.handleLogin(loginPacket);
+            this.packetListener.handleSetChunkCacheCenter(new ClientboundSetChunkCacheCenterPacket(initialChunk.x, initialChunk.z));
+            this.packetListener.handleSetChunkCacheRadius(new ClientboundSetChunkCacheRadiusPacket(32));
+
+            Abilities abilities = new Abilities();
+            abilities.flying = true;
+            abilities.mayfly = true;
+            abilities.invulnerable = true;
+            abilities.setFlyingSpeed(0.08f);
+            this.packetListener.handlePlayerAbilities(new ClientboundPlayerAbilitiesPacket(abilities));
+
+            double spawnX = (initialChunk.x << 4) + 8.0;
+            double spawnZ = (initialChunk.z << 4) + 8.0;
+            double spawnY = 80.0;
+            this.packetListener.handleMovePlayer(new ClientboundPlayerPositionPacket(spawnX, spawnY, spawnZ, 0.0f, 0.0f, Collections.emptySet(), 0));
+
             mc.setScreen(null);
 
-            if (mc.player != null) {
-                freecamController.setActive(true);
-                freecamController.setPosition(mc.player.position());
-                freecamController.setRotation(mc.player.getYRot(), mc.player.getXRot());
+            if (mc.level != null) {
+                mc.level.getChunkSource().updateViewRadius(32);
+                mc.level.getChunkSource().updateViewCenter(initialChunk.x, initialChunk.z);
             }
+
+            if (mc.player != null) {
+                mc.player.setPos(spawnX, spawnY, spawnZ);
+                mc.player.xo = spawnX;
+                mc.player.yo = spawnY;
+                mc.player.zo = spawnZ;
+                mc.player.setDeltaMovement(Vec3.ZERO);
+                mc.player.getAbilities().flying = true;
+                mc.player.getAbilities().mayfly = true;
+                mc.player.getAbilities().invulnerable = true;
+                mc.player.getAbilities().setFlyingSpeed(0.08f);
+                mc.player.onUpdateAbilities();
+                mc.player.noPhysics = true;
+
+                freecamController.setActive(true);
+                freecamController.setPosition(new Vec3(spawnX, spawnY, spawnZ));
+                freecamController.setRotation(0.0f, 0.0f);
+            }
+
+            while (nextPacket != null && nextPacket.timestampMillis() <= 50) {
+                channel.pipeline().fireChannelRead(Unpooled.wrappedBuffer(nextPacket.data()));
+                try {
+                    nextPacket = packetReader.readNextPacket().orElse(null);
+                } catch (IOException e) {
+                    nextPacket = null;
+                    break;
+                }
+            }
+            connection.tick();
+            channel.runPendingTasks();
 
             LOGGER.info("Recordly: Replay world created for '{}'", file.getName());
             return true;
